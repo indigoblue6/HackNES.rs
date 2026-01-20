@@ -1,0 +1,19 @@
+[package]
+name = "nes_cli"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+nes_core.workspace = true
+sdl2.workspace = true
+clap.workspace = true
+anyhow.workspace = true
+log.workspace = true
+env_logger.workspace = true
+
+[[bin]]
+name = "nes_cli"
+path = "src/main.rs"

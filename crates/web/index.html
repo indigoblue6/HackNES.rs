@@ -1,0 +1,312 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>HackNES.rs - Web NES Emulator</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #1e1e1e;
+            color: #d4d4d4;
+        }
+
+        h1 {
+            color: #4ec9b0;
+            text-align: center;
+        }
+
+        .container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 20px;
+        }
+
+        .emulator-section {
+            background-color: #252526;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        .debug-section {
+            background-color: #252526;
+            padding: 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        }
+
+        canvas {
+            display: block;
+            margin: 20px auto;
+            border: 2px solid #4ec9b0;
+            background-color: #000;
+            image-rendering: pixelated;
+            image-rendering: crisp-edges;
+        }
+
+        .controls {
+            display: flex;
+            gap: 10px;
+            justify-content: center;
+            margin: 20px 0;
+        }
+
+        button {
+            padding: 10px 20px;
+            font-size: 14px;
+            background-color: #0e639c;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+
+        button:hover {
+            background-color: #1177bb;
+        }
+
+        button:disabled {
+            background-color: #3e3e42;
+            cursor: not-allowed;
+        }
+
+        input[type="file"] {
+            display: none;
+        }
+
+        .file-input-label {
+            padding: 10px 20px;
+            font-size: 14px;
+            background-color: #0e639c;
+            color: white;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+            display: inline-block;
+        }
+
+        .file-input-label:hover {
+            background-color: #1177bb;
+        }
+
+        .debug-info {
+            font-family: 'Courier New', monospace;
+            font-size: 12px;
+            line-height: 1.6;
+            background-color: #1e1e1e;
+            padding: 15px;
+            border-radius: 4px;
+            overflow-x: auto;
+        }
+
+        .debug-info h3 {
+            color: #4ec9b0;
+            margin-top: 0;
+        }
+
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 4px;
+            background-color: #1e1e1e;
+        }
+
+        .status.info {
+            color: #4ec9b0;
+        }
+
+        .status.error {
+            color: #f48771;
+        }
+
+        @media (max-width: 900px) {
+            .container {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+</head>
+<body>
+    <h1>🎮 HackNES.rs</h1>
+    <p style="text-align: center;">WebAssemblyで動作するNESエミュレータ（学習用）</p>
+
+    <div class="container">
+        <div class="emulator-section">
+            <div class="controls">
+                <label for="rom-input" class="file-input-label">ROMを選択</label>
+                <input type="file" id="rom-input" accept=".nes" />
+                <button id="reset-btn" disabled>リセット</button>
+                <button id="step-btn" disabled>1ステップ</button>
+            </div>
+
+            <div id="status" class="status info">ROMファイルを選択してください</div>
+
+            <canvas id="nes-canvas" width="256" height="240"></canvas>
+        </div>
+
+        <div class="debug-section">
+            <div class="debug-info">
+                <h3>CPU状態</h3>
+                <pre id="cpu-state">-</pre>
+            </div>
+
+            <div class="debug-info">
+                <h3>PPU状態</h3>
+                <pre id="ppu-state">-</pre>
+            </div>
+
+            <div class="debug-info">
+                <h3>使い方</h3>
+                <p>1. ROMファイル (.nes) を選択</p>
+                <p>2. エミュレータが自動的に起動</p>
+                <p>3. リセットボタンでリセット</p>
+                <p>4. 1ステップボタンでデバッグ実行</p>
+                <h4 style="color: #4ec9b0; margin-top: 15px;">キー操作</h4>
+                <p>方向キー: ↑↓←→</p>
+                <p>Aボタン: A</p>
+                <p>Bボタン: S</p>
+                <p>Select: D</p>
+                <p>Start: F</p>
+            </div>
+        </div>
+    </div>
+
+    <script type="module">
+        import init, { NesWeb, init_logger } from './pkg/nes_web.js';
+
+        let nes = null;
+        let ctx = null;
+        let isRunning = false;
+        let frameCount = 0;
+
+        async function initialize() {
+            await init();
+            init_logger();
+            
+            const canvas = document.getElementById('nes-canvas');
+            ctx = canvas.getContext('2d');
+            
+            setupEventListeners();
+        }
+
+        function setupEventListeners() {
+            document.getElementById('rom-input').addEventListener('change', handleRomLoad);
+            document.getElementById('reset-btn').addEventListener('click', handleReset);
+            document.getElementById('step-btn').addEventListener('click', handleStep);
+            
+            // キーボードイベント
+            document.addEventListener('keydown', handleKeyDown);
+            document.addEventListener('keyup', handleKeyUp);
+        }
+
+        function handleKeyDown(event) {
+            if (!nes) return;
+            
+            // デフォルトの動作を防ぐ（矢印キーのスクロール防止など）
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+                event.preventDefault();
+            }
+            
+            nes.key_down(event.key);
+        }
+
+        function handleKeyUp(event) {
+            if (!nes) return;
+            nes.key_up(event.key);
+        }
+
+        async function handleRomLoad(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            try {
+                const arrayBuffer = await file.arrayBuffer();
+                const romData = new Uint8Array(arrayBuffer);
+
+                nes = new NesWeb();
+                nes.load_rom(romData);
+
+                setStatus(`ROMロード成功: ${file.name}`, 'info');
+                document.getElementById('reset-btn').disabled = false;
+                document.getElementById('step-btn').disabled = false;
+
+                startEmulation();
+            } catch (error) {
+                setStatus(`エラー: ${error}`, 'error');
+                console.error(error);
+            }
+        }
+
+        function handleReset() {
+            if (!nes) return;
+            nes.reset();
+            setStatus('リセット完了', 'info');
+        }
+
+        function handleStep() {
+            if (!nes) return;
+            
+            try {
+                nes.step_frame();
+                nes.render(ctx);
+                updateDebugInfo();
+            } catch (error) {
+                setStatus(`エラー: ${error}`, 'error');
+                console.error(error);
+            }
+        }
+
+        function startEmulation() {
+            isRunning = true;
+            requestAnimationFrame(emulationLoop);
+        }
+
+        function emulationLoop() {
+            if (!isRunning || !nes) return;
+
+            try {
+                nes.step_frame();
+                nes.render(ctx);
+                
+                // デバッグ情報は60フレームに1回更新（約1秒に1回）
+                frameCount++;
+                if (frameCount % 60 === 0) {
+                    updateDebugInfo();
+                }
+            } catch (error) {
+                setStatus(`実行エラー: ${error}`, 'error');
+                console.error(error);
+                isRunning = false;
+                return;
+            }
+
+            requestAnimationFrame(emulationLoop);
+        }
+
+        function updateDebugInfo() {
+            if (!nes) return;
+
+            try {
+                document.getElementById('cpu-state').textContent = nes.get_cpu_state();
+                document.getElementById('ppu-state').textContent = nes.get_ppu_state();
+            } catch (error) {
+                console.error('Debug info error:', error);
+            }
+        }
+
+        function setStatus(message, type) {
+            const statusEl = document.getElementById('status');
+            statusEl.textContent = message;
+            statusEl.className = `status ${type}`;
+        }
+
+        initialize().catch(console.error);
+    </script>
+</body>
+</html>

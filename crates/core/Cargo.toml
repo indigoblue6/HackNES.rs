@@ -1,0 +1,18 @@
+[package]
+name = "nes_core"
+version.workspace = true
+edition.workspace = true
+authors.workspace = true
+license.workspace = true
+repository.workspace = true
+
+[dependencies]
+thiserror.workspace = true
+log.workspace = true
+
+[dev-dependencies]
+env_logger.workspace = true
+
+[lib]
+name = "nes_core"
+path = "src/lib.rs"

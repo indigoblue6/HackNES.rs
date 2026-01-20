@@ -1,0 +1,22 @@
+/target/
+/Cargo.lock
+**/*.rs.bk
+*.pdb
+
+# IDEs
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Web build artifacts
+crates/web/pkg/
+crates/web/node_modules/
+
+# Test outputs
+*.log
