@@ -1,6 +1,7 @@
 //! # Memory Bus
 //! Based on https://github.com/starrhorne/nes-rust
 
+use crate::apu::Apu;
 use crate::ppu::Ppu;
 use crate::cartridge::Cartridge;
 use crate::controller::Controller;
@@ -10,6 +11,7 @@ use std::rc::Rc;
 pub struct Bus {
     pub ram: [u8; 2048],
     pub ppu: Ppu,
+    pub apu: Apu,
     pub cartridge: Option<Rc<RefCell<Cartridge>>>,
     pub controller: Controller,
     pub cycles: u64,
@@ -21,6 +23,7 @@ impl Bus {
         Bus {
             ram: [0; 2048],
             ppu: Ppu::new(),
+            apu: Apu::new(),
             cartridge: None,
             controller: Controller::new(),
             cycles: 0,
@@ -38,23 +41,20 @@ impl Bus {
         match address {
             0x0000..=0x1FFF => self.ram[address as usize % 0x0800],
             0x2000..=0x3FFF => self.ppu.read_register(address),
-            0x4000..=0x4015 => {
-                // APU registers
-                0
-            }
+            0x4000..=0x4013 => 0, // APU write-only registers
+            0x4014 => 0,         // OAM DMA
+            0x4015 => self.apu.read_register(address),
             0x4016 => self.controller.read(),
-            0x4017 => {
-                // Controller 2 (not implemented)
-                0
-            }
-            0x4020..=0xFFFF => {
+            0x4017 => 0, // Controller 2 (not implemented)
+            0x4018..=0x401F => 0, // APU/IO test registers
+            _ => {
+                // 0x4020..=0xFFFF
                 if let Some(ref c) = self.cartridge {
                     c.borrow().read_prg_byte(address)
                 } else {
                     (address >> 8) as u8
                 }
             }
-            _ => (address >> 8) as u8,
         }
     }
 
@@ -62,17 +62,18 @@ impl Bus {
         match address {
             0x0000..=0x1FFF => self.ram[address as usize % 0x0800] = value,
             0x2000..=0x3FFF => self.ppu.write_register(address, value),
-            0x4000..=0x4013 | 0x4015 | 0x4017 => {
-                // APU registers
-            }
+            0x4000..=0x4013 => self.apu.write_register(address, value),
             0x4014 => self.oam_dma(value as u16),
+            0x4015 => self.apu.write_register(address, value),
             0x4016 => self.controller.write(value),
-            0x4020..=0xFFFF => {
+            0x4017 => self.apu.write_register(address, value),
+            0x4018..=0x401F => {} // APU/IO test registers (ignored)
+            _ => {
+                // 0x4020..=0xFFFF
                 if let Some(ref c) = self.cartridge {
                     c.borrow_mut().write_prg_byte(address, value);
                 }
             }
-            _ => (),
         }
     }
 
@@ -110,6 +111,9 @@ impl Bus {
         for _ in 0..3 {
             self.ppu.tick();
         }
+
+        // Tick APU once per CPU cycle
+        self.apu.tick();
     }
 
     pub fn load_rom_from_memory(&mut self, data: &[u8]) {

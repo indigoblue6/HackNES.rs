@@ -93,6 +93,17 @@ impl NesWeb {
         )
     }
 
+    /// オーディオサンプルを取得
+    pub fn get_audio_samples(&mut self) -> Vec<f32> {
+        self.nes.get_audio_samples()
+    }
+
+    /// オーディオサンプル数を取得
+    pub fn get_audio_sample_count(&self) -> usize {
+        // APU sample buffer is drained by get_audio_samples, return expected samples per frame
+        (44100.0 / 60.0) as usize
+    }
+
     /// キーボード入力を処理（キーダウン）
     /// キーコード: ArrowUp, ArrowDown, ArrowLeft, ArrowRight, a, s, d, f
     pub fn key_down(&mut self, key: &str) {

@@ -1,6 +1,7 @@
 //! # NES Core
 //! Based on https://github.com/starrhorne/nes-rust
 
+pub mod apu;
 pub mod cpu;
 pub mod ppu;
 pub mod bus;
@@ -42,20 +43,38 @@ impl Nes {
 
         while self.cpu.bus.cycles < target {
             self.cpu.step()?;
-            
+
             // nestestの成功アドレスをチェック
             if self.cpu.pc() == 0xC66E {
                 log::info!("nestest PASSED at PC=$C66E");
             }
-            
+
             // Check for NMI
             if self.cpu.bus.ppu.nmi {
                 self.cpu.interrupt(cpu::Interrupt::Nmi);
                 self.cpu.bus.ppu.nmi = false;
             }
+
+            // Check for IRQ from mapper
+            if let Some(ref c) = self.cpu.bus.cartridge {
+                if c.borrow().irq_pending() {
+                    c.borrow_mut().acknowledge_irq();
+                    self.cpu.interrupt(cpu::Interrupt::Irq);
+                }
+            }
+
+            // Check for IRQ from APU
+            if self.cpu.bus.apu.irq_pending() {
+                self.cpu.interrupt(cpu::Interrupt::Irq);
+            }
         }
 
         Ok(self.cpu.bus.ppu.frame_buffer())
+    }
+
+    /// オーディオサンプルを取得
+    pub fn get_audio_samples(&mut self) -> Vec<f32> {
+        self.cpu.bus.apu.get_samples()
     }
 
     /// 1CPUサイクル実行（デバッグ用）
@@ -63,12 +82,25 @@ impl Nes {
         let start_cycles = self.cpu.bus.cycles;
         self.cpu.step()?;
         let elapsed = (self.cpu.bus.cycles - start_cycles) as u32;
-        
+
         if self.cpu.bus.ppu.nmi {
             self.cpu.interrupt(cpu::Interrupt::Nmi);
             self.cpu.bus.ppu.nmi = false;
         }
-        
+
+        // Check for IRQ from mapper
+        if let Some(ref c) = self.cpu.bus.cartridge {
+            if c.borrow().irq_pending() {
+                c.borrow_mut().acknowledge_irq();
+                self.cpu.interrupt(cpu::Interrupt::Irq);
+            }
+        }
+
+        // Check for IRQ from APU
+        if self.cpu.bus.apu.irq_pending() {
+            self.cpu.interrupt(cpu::Interrupt::Irq);
+        }
+
         Ok(elapsed)
     }
 

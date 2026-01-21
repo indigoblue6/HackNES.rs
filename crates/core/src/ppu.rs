@@ -42,8 +42,6 @@ pub struct Registers {
     pub scroll_x: u8,  // $2005 first write
     pub scroll_y: u8,  // $2005 second write
     pub addr: u16,     // $2006
-    addr_latch: bool,
-    scroll_latch: bool,
     pub data_buffer: u8,
     pub v: u16,        // Current VRAM address (15 bits)
     pub t: u16,        // Temporary VRAM address (15 bits)
@@ -94,6 +92,17 @@ impl Ppu {
         // Render full frame at end of visible scanlines
         if self.renderer.scanline == 240 && self.renderer.cycle == 1 {
             self.render_frame();
+        }
+
+        // Clock MMC3 IRQ counter at cycle 260 on visible scanlines
+        // Only clock when rendering is enabled (BG or sprites enabled)
+        if self.renderer.cycle == 260
+            && self.renderer.scanline < 240
+            && (self.registers.mask & 0x18) != 0
+        {
+            if let Some(ref c) = self.cartridge {
+                c.borrow_mut().clock_irq();
+            }
         }
     }
 
@@ -416,8 +425,6 @@ impl Registers {
             scroll_x: 0,
             scroll_y: 0,
             addr: 0,
-            addr_latch: false,
-            scroll_latch: false,
             data_buffer: 0,
             v: 0,
             t: 0,

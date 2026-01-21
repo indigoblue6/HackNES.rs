@@ -8,11 +8,28 @@ pub struct Cartridge {
     chr_ram: Vec<u8>,
     mapper: u8,
     mirroring: Mirroring,
+    // Mapper 2 (UxROM) state
+    prg_bank: u8,
+    // Mapper 3 (CNROM) state
+    chr_bank: u8,
+    // Mapper 1 (MMC1) state
+    mmc1_shift_register: u8,
+    mmc1_shift_count: u8,
+    mmc1_control: u8,
+    mmc1_chr_bank_0: u8,
+    mmc1_chr_bank_1: u8,
+    mmc1_prg_bank: u8,
     // MMC3 (Mapper 4) state
     registers: [u8; 8],
     register_select: u8,
     prg_bank_mode: bool,
     chr_bank_mode: bool,
+    // Mapper 4 IRQ state
+    irq_counter: u8,
+    irq_reload: u8,
+    irq_pending: bool,
+    irq_enabled: bool,
+    irq_reload_flag: bool,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq)]
@@ -66,16 +83,37 @@ impl Cartridge {
             chr_ram,
             mapper,
             mirroring,
+            // Mapper 2
+            prg_bank: 0,
+            // Mapper 3
+            chr_bank: 0,
+            // Mapper 1 (MMC1)
+            mmc1_shift_register: 0,
+            mmc1_shift_count: 0,
+            mmc1_control: 0x0C, // PRG ROM mode 3, CHR ROM mode 0
+            mmc1_chr_bank_0: 0,
+            mmc1_chr_bank_1: 0,
+            mmc1_prg_bank: 0,
+            // Mapper 4 (MMC3)
             registers: [0, 0, 0, 0, 0, 0, 0, 0],
             register_select: 0,
             prg_bank_mode: false,
             chr_bank_mode: false,
+            // Mapper 4 IRQ
+            irq_counter: 0,
+            irq_reload: 0,
+            irq_pending: false,
+            irq_enabled: false,
+            irq_reload_flag: false,
         }
     }
 
     pub fn read_prg_byte(&self, addr: u16) -> u8 {
         match self.mapper {
             0 => self.mapper0_read_prg(addr),
+            1 => self.mapper1_read_prg(addr),
+            2 => self.mapper2_read_prg(addr),
+            3 => self.mapper3_read_prg(addr),
             4 => self.mapper4_read_prg(addr),
             _ => {
                 log::warn!("Unsupported mapper {}", self.mapper);
@@ -87,6 +125,9 @@ impl Cartridge {
     pub fn write_prg_byte(&mut self, addr: u16, value: u8) {
         match self.mapper {
             0 => self.mapper0_write_prg(addr, value),
+            1 => self.mapper1_write_prg(addr, value),
+            2 => self.mapper2_write_prg(addr, value),
+            3 => self.mapper3_write_prg(addr, value),
             4 => self.mapper4_write_prg(addr, value),
             _ => {}
         }
@@ -95,6 +136,9 @@ impl Cartridge {
     pub fn read_chr_byte(&self, addr: u16) -> u8 {
         match self.mapper {
             0 => self.mapper0_read_chr(addr),
+            1 => self.mapper1_read_chr(addr),
+            2 => self.mapper2_read_chr(addr),
+            3 => self.mapper3_read_chr(addr),
             4 => self.mapper4_read_chr(addr),
             _ => 0,
         }
@@ -103,6 +147,9 @@ impl Cartridge {
     pub fn write_chr_byte(&mut self, addr: u16, value: u8) {
         match self.mapper {
             0 => self.mapper0_write_chr(addr, value),
+            1 => self.mapper1_write_chr(addr, value),
+            2 => self.mapper2_write_chr(addr, value),
+            3 => self.mapper3_write_chr(addr, value),
             4 => self.mapper4_write_chr(addr, value),
             _ => {}
         }
@@ -232,8 +279,26 @@ impl Cartridge {
                 }
                 // PRG RAM protect ($A001-$BFFF, odd) - ignored for now
             }
-            // $C000-$DFFF: IRQ registers (not implemented)
-            // $E000-$FFFF: IRQ registers (not implemented)
+            0xC000..=0xDFFF => {
+                if addr & 1 == 0 {
+                    // IRQ latch ($C000-$DFFE, even)
+                    self.irq_reload = value;
+                } else {
+                    // IRQ reload ($C001-$DFFF, odd)
+                    self.irq_reload_flag = true;
+                    self.irq_counter = 0;
+                }
+            }
+            0xE000..=0xFFFF => {
+                if addr & 1 == 0 {
+                    // IRQ disable ($E000-$FFFE, even)
+                    self.irq_enabled = false;
+                    self.irq_pending = false;
+                } else {
+                    // IRQ enable ($E001-$FFFF, odd)
+                    self.irq_enabled = true;
+                }
+            }
             _ => {}
         }
     }
@@ -311,6 +376,295 @@ impl Cartridge {
     fn mapper4_write_chr(&mut self, addr: u16, value: u8) {
         if self.chr_rom.is_empty() {
             let index = (addr & 0x1FFF) as usize;
+            if index < self.chr_ram.len() {
+                self.chr_ram[index] = value;
+            }
+        }
+    }
+
+    // Mapper 4 IRQ
+    pub fn clock_irq(&mut self) {
+        if self.irq_counter == 0 || self.irq_reload_flag {
+            self.irq_counter = self.irq_reload;
+            self.irq_reload_flag = false;
+        } else {
+            self.irq_counter -= 1;
+        }
+
+        if self.irq_counter == 0 && self.irq_enabled {
+            self.irq_pending = true;
+        }
+    }
+
+    pub fn irq_pending(&self) -> bool {
+        self.irq_pending
+    }
+
+    pub fn acknowledge_irq(&mut self) {
+        self.irq_pending = false;
+    }
+
+    // Mapper 2 (UxROM)
+    fn mapper2_read_prg(&self, addr: u16) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => {
+                let index = (addr - 0x6000) as usize;
+                self.prg_ram.get(index).copied().unwrap_or(0)
+            }
+            0x8000..=0xBFFF => {
+                // Switchable 16KB bank
+                let bank = self.prg_bank as usize;
+                let offset = (addr - 0x8000) as usize;
+                let index = (bank * 16384 + offset) % self.prg_rom.len().max(1);
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            0xC000..=0xFFFF => {
+                // Fixed to last 16KB bank
+                let last_bank = (self.prg_rom.len() / 16384).saturating_sub(1);
+                let offset = (addr - 0xC000) as usize;
+                let index = (last_bank * 16384 + offset) % self.prg_rom.len().max(1);
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    fn mapper2_write_prg(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x6000..=0x7FFF => {
+                let index = (addr - 0x6000) as usize;
+                if index < self.prg_ram.len() {
+                    self.prg_ram[index] = value;
+                }
+            }
+            0x8000..=0xFFFF => {
+                // Bank select
+                self.prg_bank = value & 0x0F;
+            }
+            _ => {}
+        }
+    }
+
+    fn mapper2_read_chr(&self, addr: u16) -> u8 {
+        // CHR RAM only
+        let index = (addr & 0x1FFF) as usize;
+        self.chr_ram.get(index).copied().unwrap_or(0)
+    }
+
+    fn mapper2_write_chr(&mut self, addr: u16, value: u8) {
+        // CHR RAM only
+        let index = (addr & 0x1FFF) as usize;
+        if index < self.chr_ram.len() {
+            self.chr_ram[index] = value;
+        }
+    }
+
+    // Mapper 3 (CNROM)
+    fn mapper3_read_prg(&self, addr: u16) -> u8 {
+        // Same as Mapper 0
+        self.mapper0_read_prg(addr)
+    }
+
+    fn mapper3_write_prg(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x6000..=0x7FFF => {
+                let index = (addr - 0x6000) as usize;
+                if index < self.prg_ram.len() {
+                    self.prg_ram[index] = value;
+                }
+            }
+            0x8000..=0xFFFF => {
+                // CHR bank select
+                self.chr_bank = value & 0x03;
+            }
+            _ => {}
+        }
+    }
+
+    fn mapper3_read_chr(&self, addr: u16) -> u8 {
+        if self.chr_rom.is_empty() {
+            return self.chr_ram.get((addr & 0x1FFF) as usize).copied().unwrap_or(0);
+        }
+        let bank = self.chr_bank as usize;
+        let offset = (addr & 0x1FFF) as usize;
+        let index = (bank * 8192 + offset) % self.chr_rom.len().max(1);
+        self.chr_rom.get(index).copied().unwrap_or(0)
+    }
+
+    fn mapper3_write_chr(&mut self, addr: u16, value: u8) {
+        // CHR ROM, ignore writes (unless CHR RAM)
+        if self.chr_rom.is_empty() {
+            let index = (addr & 0x1FFF) as usize;
+            if index < self.chr_ram.len() {
+                self.chr_ram[index] = value;
+            }
+        }
+    }
+
+    // Mapper 1 (MMC1)
+    fn mapper1_read_prg(&self, addr: u16) -> u8 {
+        match addr {
+            0x6000..=0x7FFF => {
+                let index = (addr - 0x6000) as usize;
+                self.prg_ram.get(index).copied().unwrap_or(0)
+            }
+            0x8000..=0xBFFF => {
+                let prg_mode = (self.mmc1_control >> 2) & 0x03;
+                let bank = match prg_mode {
+                    0 | 1 => {
+                        // 32KB mode: use lower bit of prg_bank
+                        (self.mmc1_prg_bank & 0xFE) as usize
+                    }
+                    2 => {
+                        // Fix first bank at $8000
+                        0
+                    }
+                    3 => {
+                        // Switch bank at $8000
+                        self.mmc1_prg_bank as usize
+                    }
+                    _ => 0,
+                };
+                let offset = (addr - 0x8000) as usize;
+                let index = (bank * 16384 + offset) % self.prg_rom.len().max(1);
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            0xC000..=0xFFFF => {
+                let prg_mode = (self.mmc1_control >> 2) & 0x03;
+                let bank = match prg_mode {
+                    0 | 1 => {
+                        // 32KB mode: use upper bank
+                        (self.mmc1_prg_bank | 0x01) as usize
+                    }
+                    2 => {
+                        // Switch bank at $C000
+                        self.mmc1_prg_bank as usize
+                    }
+                    3 => {
+                        // Fix last bank at $C000
+                        (self.prg_rom.len() / 16384).saturating_sub(1)
+                    }
+                    _ => 0,
+                };
+                let offset = (addr - 0xC000) as usize;
+                let index = (bank * 16384 + offset) % self.prg_rom.len().max(1);
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    fn mapper1_write_prg(&mut self, addr: u16, value: u8) {
+        match addr {
+            0x6000..=0x7FFF => {
+                let index = (addr - 0x6000) as usize;
+                if index < self.prg_ram.len() {
+                    self.prg_ram[index] = value;
+                }
+            }
+            0x8000..=0xFFFF => {
+                if value & 0x80 != 0 {
+                    // Reset shift register
+                    self.mmc1_shift_register = 0;
+                    self.mmc1_shift_count = 0;
+                    self.mmc1_control |= 0x0C;
+                } else {
+                    // Shift in bit 0
+                    self.mmc1_shift_register |= (value & 0x01) << self.mmc1_shift_count;
+                    self.mmc1_shift_count += 1;
+
+                    if self.mmc1_shift_count == 5 {
+                        let register = (addr >> 13) & 0x03;
+                        match register {
+                            0 => {
+                                // Control register
+                                self.mmc1_control = self.mmc1_shift_register;
+                                // Update mirroring
+                                self.mirroring = match self.mmc1_control & 0x03 {
+                                    0 | 1 => Mirroring::Horizontal, // Single screen (simplified)
+                                    2 => Mirroring::Vertical,
+                                    3 => Mirroring::Horizontal,
+                                    _ => Mirroring::Horizontal,
+                                };
+                            }
+                            1 => {
+                                // CHR bank 0
+                                self.mmc1_chr_bank_0 = self.mmc1_shift_register;
+                            }
+                            2 => {
+                                // CHR bank 1
+                                self.mmc1_chr_bank_1 = self.mmc1_shift_register;
+                            }
+                            3 => {
+                                // PRG bank
+                                self.mmc1_prg_bank = self.mmc1_shift_register & 0x0F;
+                            }
+                            _ => {}
+                        }
+                        self.mmc1_shift_register = 0;
+                        self.mmc1_shift_count = 0;
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+
+    fn mapper1_read_chr(&self, addr: u16) -> u8 {
+        let chr_mode = (self.mmc1_control >> 4) & 0x01;
+        let (bank, offset) = if chr_mode == 0 {
+            // 8KB mode
+            let bank = (self.mmc1_chr_bank_0 & 0x1E) as usize;
+            let offset = (addr & 0x1FFF) as usize;
+            (bank, offset)
+        } else {
+            // 4KB mode
+            if addr < 0x1000 {
+                let bank = self.mmc1_chr_bank_0 as usize;
+                let offset = (addr & 0x0FFF) as usize;
+                (bank, offset)
+            } else {
+                let bank = self.mmc1_chr_bank_1 as usize;
+                let offset = (addr & 0x0FFF) as usize;
+                (bank, offset)
+            }
+        };
+
+        if self.chr_rom.is_empty() {
+            // CHR RAM
+            let index = if chr_mode == 0 {
+                (bank * 8192 + offset) % self.chr_ram.len().max(1)
+            } else {
+                (bank * 4096 + offset) % self.chr_ram.len().max(1)
+            };
+            self.chr_ram.get(index).copied().unwrap_or(0)
+        } else {
+            // CHR ROM
+            let index = if chr_mode == 0 {
+                (bank * 8192 + offset) % self.chr_rom.len().max(1)
+            } else {
+                (bank * 4096 + offset) % self.chr_rom.len().max(1)
+            };
+            self.chr_rom.get(index).copied().unwrap_or(0)
+        }
+    }
+
+    fn mapper1_write_chr(&mut self, addr: u16, value: u8) {
+        if self.chr_rom.is_empty() {
+            let chr_mode = (self.mmc1_control >> 4) & 0x01;
+            let index = if chr_mode == 0 {
+                let bank = (self.mmc1_chr_bank_0 & 0x1E) as usize;
+                let offset = (addr & 0x1FFF) as usize;
+                (bank * 8192 + offset) % self.chr_ram.len().max(1)
+            } else if addr < 0x1000 {
+                let bank = self.mmc1_chr_bank_0 as usize;
+                let offset = (addr & 0x0FFF) as usize;
+                (bank * 4096 + offset) % self.chr_ram.len().max(1)
+            } else {
+                let bank = self.mmc1_chr_bank_1 as usize;
+                let offset = (addr & 0x0FFF) as usize;
+                (bank * 4096 + offset) % self.chr_ram.len().max(1)
+            };
             if index < self.chr_ram.len() {
                 self.chr_ram[index] = value;
             }

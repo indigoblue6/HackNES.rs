@@ -31,6 +31,14 @@ features = [
     "HtmlCanvasElement",
     "CanvasRenderingContext2d",
     "ImageData",
+    "AudioContext",
+    "AudioContextState",
+    "AudioBuffer",
+    "AudioBufferSourceNode",
+    "AudioDestinationNode",
+    "GainNode",
+    "GainOptions",
+    "AudioBufferOptions",
 ]
 
 [features]

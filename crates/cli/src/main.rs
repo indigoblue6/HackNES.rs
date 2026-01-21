@@ -4,11 +4,14 @@
 
 use anyhow::Result;
 use clap::Parser;
+use nes_core::controller::Button;
 use nes_core::Nes;
+use sdl2::audio::{AudioCallback, AudioSpecDesired};
 use sdl2::event::Event;
 use sdl2::keyboard::Keycode;
 use sdl2::pixels::PixelFormatEnum;
 use std::path::PathBuf;
+use std::sync::{Arc, Mutex};
 
 /// NESエミュレータ CLI
 #[derive(Parser, Debug)]
@@ -26,6 +29,53 @@ struct Args {
     /// デバッグモード
     #[arg(short, long)]
     debug: bool,
+
+    /// オーディオを無効化
+    #[arg(long)]
+    no_audio: bool,
+}
+
+struct AudioPlayer {
+    samples: Arc<Mutex<Vec<f32>>>,
+    position: usize,
+}
+
+impl AudioCallback for AudioPlayer {
+    type Channel = f32;
+
+    fn callback(&mut self, out: &mut [f32]) {
+        let mut samples = self.samples.lock().unwrap();
+        for sample in out.iter_mut() {
+            if self.position < samples.len() {
+                *sample = samples[self.position];
+                self.position += 1;
+            } else {
+                *sample = 0.0;
+            }
+        }
+        // Drain consumed samples
+        if self.position >= samples.len() {
+            samples.clear();
+            self.position = 0;
+        } else if self.position > 0 {
+            samples.drain(0..self.position);
+            self.position = 0;
+        }
+    }
+}
+
+fn keycode_to_button(keycode: Keycode) -> Option<Button> {
+    match keycode {
+        Keycode::Up => Some(Button::Up),
+        Keycode::Down => Some(Button::Down),
+        Keycode::Left => Some(Button::Left),
+        Keycode::Right => Some(Button::Right),
+        Keycode::A => Some(Button::A),
+        Keycode::S => Some(Button::B),
+        Keycode::D => Some(Button::Select),
+        Keycode::F => Some(Button::Start),
+        _ => None,
+    }
 }
 
 fn main() -> Result<()> {
@@ -43,6 +93,29 @@ fn main() -> Result<()> {
     // SDL2の初期化
     let sdl_context = sdl2::init().map_err(|e| anyhow::anyhow!(e))?;
     let video_subsystem = sdl_context.video().map_err(|e| anyhow::anyhow!(e))?;
+
+    // オーディオ初期化
+    let audio_samples: Arc<Mutex<Vec<f32>>> = Arc::new(Mutex::new(Vec::new()));
+    let _audio_device = if !args.no_audio {
+        let audio_subsystem = sdl_context.audio().map_err(|e| anyhow::anyhow!(e))?;
+        let desired_spec = AudioSpecDesired {
+            freq: Some(44100),
+            channels: Some(1),
+            samples: Some(1024),
+        };
+        let device = audio_subsystem
+            .open_playback(None, &desired_spec, |_spec| AudioPlayer {
+                samples: audio_samples.clone(),
+                position: 0,
+            })
+            .map_err(|e| anyhow::anyhow!(e))?;
+        device.resume();
+        log::info!("Audio initialized");
+        Some(device)
+    } else {
+        log::info!("Audio disabled");
+        None
+    };
 
     let window_width = 256 * args.scale;
     let window_height = 240 * args.scale;
@@ -79,13 +152,17 @@ fn main() -> Result<()> {
                     if args.debug {
                         log::debug!("Key pressed: {:?}", keycode);
                     }
-                    // TODO: コントローラー入力処理
+                    if let Some(button) = keycode_to_button(keycode) {
+                        nes.cpu_state_mut().bus.controller.press(button);
+                    }
                 }
                 Event::KeyUp {
-                    keycode: Some(_keycode),
+                    keycode: Some(keycode),
                     ..
                 } => {
-                    // TODO: コントローラー入力処理
+                    if let Some(button) = keycode_to_button(keycode) {
+                        nes.cpu_state_mut().bus.controller.release(button);
+                    }
                 }
                 _ => {}
             }
@@ -104,6 +181,15 @@ fn main() -> Result<()> {
                     .copy(&texture, None, None)
                     .map_err(|e| anyhow::anyhow!(e))?;
                 canvas.present();
+
+                // オーディオサンプルを取得してバッファに追加
+                if !args.no_audio {
+                    let samples = nes.get_audio_samples();
+                    if !samples.is_empty() {
+                        let mut audio_buffer = audio_samples.lock().unwrap();
+                        audio_buffer.extend(samples);
+                    }
+                }
             }
             Err(e) => {
                 log::error!("Emulation error: {}", e);
