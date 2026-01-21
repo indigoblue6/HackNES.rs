@@ -132,6 +132,156 @@ impl NesWeb {
             _ => None,
         }
     }
+
+    // ========== メモリエディタ API ==========
+
+    /// RAMを読み取り (2048バイト)
+    pub fn read_ram(&self) -> Vec<u8> {
+        self.nes.read_ram().to_vec()
+    }
+
+    /// RAMの特定アドレスを読み取り
+    pub fn peek_ram(&self, address: u16) -> u8 {
+        self.nes.read_ram()[(address & 0x07FF) as usize]
+    }
+
+    /// RAMに書き込み
+    pub fn poke_ram(&mut self, address: u16, value: u8) {
+        self.nes.write_ram(address, value);
+    }
+
+    /// 任意のメモリアドレスを読み取り
+    pub fn peek_memory(&self, address: u16) -> u8 {
+        self.nes.peek_memory(address)
+    }
+
+    /// 任意のメモリアドレスに書き込み
+    pub fn poke_memory(&mut self, address: u16, value: u8) {
+        self.nes.poke_memory(address, value);
+    }
+
+    /// メモリ範囲を読み取り
+    pub fn read_memory_range(&self, start: u16, length: usize) -> Vec<u8> {
+        self.nes.read_memory_range(start, length)
+    }
+
+    /// VRAMを読み取り
+    pub fn read_vram(&self) -> Vec<u8> {
+        self.nes.read_vram().to_vec()
+    }
+
+    /// VRAMに書き込み
+    pub fn poke_vram(&mut self, address: u16, value: u8) {
+        self.nes.write_vram(address, value);
+    }
+
+    /// OAMを読み取り
+    pub fn read_oam(&self) -> Vec<u8> {
+        self.nes.read_oam().to_vec()
+    }
+
+    /// OAMに書き込み
+    pub fn poke_oam(&mut self, address: u8, value: u8) {
+        self.nes.write_oam(address, value);
+    }
+
+    /// パレットを読み取り
+    pub fn read_palette(&self) -> Vec<u8> {
+        self.nes.read_palette().to_vec()
+    }
+
+    /// パレットに書き込み
+    pub fn poke_palette(&mut self, address: u8, value: u8) {
+        self.nes.write_palette(address, value);
+    }
+
+    /// CHRを読み取り
+    pub fn peek_chr(&self, address: u16) -> u8 {
+        self.nes.read_chr(address)
+    }
+
+    /// CHRに書き込み
+    pub fn poke_chr(&mut self, address: u16, value: u8) {
+        self.nes.write_chr(address, value);
+    }
+
+    /// 値を検索
+    pub fn search_value(&self, value: u8) -> Vec<u16> {
+        self.nes.search_memory(value)
+    }
+
+    /// メモリダンプ（16進数文字列）
+    pub fn hex_dump(&self, start: u16, length: usize) -> String {
+        self.nes.hex_dump(start, length)
+    }
+
+    /// 逆アセンブル
+    pub fn disassemble(&self, start: u16, count: usize) -> String {
+        self.nes
+            .disassemble(start, count)
+            .iter()
+            .map(|(addr, inst)| format!("{:04X}: {}", addr, inst))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// 現在のPCから逆アセンブル
+    pub fn disassemble_at_pc(&self, count: usize) -> String {
+        self.nes
+            .disassemble_at_pc(count)
+            .iter()
+            .map(|(addr, inst)| format!("{:04X}: {}", addr, inst))
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    /// スプライト情報を取得（JSON形式）
+    pub fn get_sprites_json(&self) -> String {
+        let sprites = self.nes.get_all_sprites();
+        let json: Vec<String> = sprites
+            .iter()
+            .filter(|(_, y, _, _, _)| *y < 0xEF) // 非表示スプライトを除外
+            .map(|(idx, y, tile, attr, x)| {
+                format!(
+                    r#"{{"index":{},"x":{},"y":{},"tile":{},"attr":{}}}"#,
+                    idx, x, y, tile, attr
+                )
+            })
+            .collect();
+        format!("[{}]", json.join(","))
+    }
+
+    /// Game Genieコードを適用
+    pub fn apply_game_genie(&mut self, code: &str) -> Result<String, JsValue> {
+        use nes_core::memory_editor::CheatCode;
+
+        match CheatCode::from_game_genie(code) {
+            Some(cheat) => {
+                self.nes.poke_memory(cheat.address, cheat.value);
+                Ok(format!(
+                    "Applied: {:04X} = {:02X}",
+                    cheat.address, cheat.value
+                ))
+            }
+            None => Err(JsValue::from_str("Invalid Game Genie code")),
+        }
+    }
+
+    /// RAWチートコードを適用 (AAAA:VV形式)
+    pub fn apply_raw_cheat(&mut self, code: &str) -> Result<String, JsValue> {
+        use nes_core::memory_editor::CheatCode;
+
+        match CheatCode::from_raw(code) {
+            Some(cheat) => {
+                self.nes.poke_memory(cheat.address, cheat.value);
+                Ok(format!(
+                    "Applied: {:04X} = {:02X}",
+                    cheat.address, cheat.value
+                ))
+            }
+            None => Err(JsValue::from_str("Invalid cheat code format (use AAAA:VV)")),
+        }
+    }
 }
 
 /// JavaScriptのコンソールにログを出力（初期化）

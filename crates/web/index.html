@@ -5,10 +5,13 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>HackNES.rs - Web NES Emulator</title>
     <style>
+        * {
+            box-sizing: border-box;
+        }
+
         body {
             font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
-            max-width: 1200px;
-            margin: 0 auto;
+            margin: 0;
             padding: 20px;
             background-color: #1e1e1e;
             color: #d4d4d4;
@@ -17,31 +20,53 @@
         h1 {
             color: #4ec9b0;
             text-align: center;
+            margin-bottom: 5px;
         }
 
-        .container {
+        .subtitle {
+            text-align: center;
+            color: #808080;
+            margin-bottom: 20px;
+        }
+
+        .main-container {
             display: grid;
-            grid-template-columns: 2fr 1fr;
+            grid-template-columns: 300px 1fr;
             gap: 20px;
+            max-width: 1600px;
+            margin: 0 auto;
         }
 
-        .emulator-section {
+        .left-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .right-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 15px;
+        }
+
+        .panel {
             background-color: #252526;
-            padding: 20px;
+            padding: 15px;
             border-radius: 8px;
             box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
 
-        .debug-section {
-            background-color: #252526;
-            padding: 20px;
-            border-radius: 8px;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
+        .panel h3 {
+            color: #4ec9b0;
+            margin: 0 0 10px 0;
+            font-size: 14px;
+            border-bottom: 1px solid #3e3e42;
+            padding-bottom: 8px;
         }
 
         canvas {
             display: block;
-            margin: 20px auto;
+            margin: 0 auto;
             border: 2px solid #4ec9b0;
             background-color: #000;
             image-rendering: pixelated;
@@ -50,20 +75,21 @@
 
         .controls {
             display: flex;
-            gap: 10px;
+            gap: 8px;
+            flex-wrap: wrap;
             justify-content: center;
-            margin: 20px 0;
+            margin-bottom: 10px;
         }
 
         button {
-            padding: 10px 20px;
-            font-size: 14px;
+            padding: 8px 16px;
+            font-size: 12px;
             background-color: #0e639c;
             color: white;
             border: none;
             border-radius: 4px;
             cursor: pointer;
-            transition: background-color 0.3s;
+            transition: background-color 0.2s;
         }
 
         button:hover {
@@ -75,18 +101,31 @@
             cursor: not-allowed;
         }
 
+        button.active {
+            background-color: #4ec9b0;
+            color: #1e1e1e;
+        }
+
+        button.danger {
+            background-color: #f14c4c;
+        }
+
+        button.danger:hover {
+            background-color: #f77;
+        }
+
         input[type="file"] {
             display: none;
         }
 
         .file-input-label {
-            padding: 10px 20px;
-            font-size: 14px;
+            padding: 8px 16px;
+            font-size: 12px;
             background-color: #0e639c;
             color: white;
             border-radius: 4px;
             cursor: pointer;
-            transition: background-color 0.3s;
+            transition: background-color 0.2s;
             display: inline-block;
         }
 
@@ -94,85 +133,318 @@
             background-color: #1177bb;
         }
 
-        .debug-info {
-            font-family: 'Courier New', monospace;
+        input[type="text"], input[type="number"], select {
+            padding: 6px 10px;
             font-size: 12px;
-            line-height: 1.6;
-            background-color: #1e1e1e;
-            padding: 15px;
+            background-color: #3c3c3c;
+            color: #d4d4d4;
+            border: 1px solid #3e3e42;
             border-radius: 4px;
-            overflow-x: auto;
+            font-family: 'Courier New', monospace;
         }
 
-        .debug-info h3 {
-            color: #4ec9b0;
-            margin-top: 0;
+        input[type="text"]:focus, input[type="number"]:focus, select:focus {
+            outline: none;
+            border-color: #4ec9b0;
         }
 
         .status {
             text-align: center;
-            padding: 10px;
+            padding: 8px;
             margin: 10px 0;
             border-radius: 4px;
             background-color: #1e1e1e;
+            font-size: 12px;
         }
 
-        .status.info {
-            color: #4ec9b0;
+        .status.info { color: #4ec9b0; }
+        .status.error { color: #f48771; }
+        .status.success { color: #89d185; }
+
+        /* タブ */
+        .tabs {
+            display: flex;
+            gap: 2px;
+            margin-bottom: 10px;
+            flex-wrap: wrap;
         }
 
-        .status.error {
-            color: #f48771;
+        .tab {
+            padding: 6px 12px;
+            font-size: 11px;
+            background-color: #3c3c3c;
+            color: #808080;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s;
         }
 
+        .tab:first-child { border-radius: 4px 0 0 4px; }
+        .tab:last-child { border-radius: 0 4px 4px 0; }
+
+        .tab:hover { background-color: #4e4e4e; color: #d4d4d4; }
+        .tab.active { background-color: #4ec9b0; color: #1e1e1e; }
+
+        .tab-content { display: none; }
+        .tab-content.active { display: block; }
+
+        /* メモリビューア */
+        .memory-viewer {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.4;
+            background-color: #1e1e1e;
+            padding: 10px;
+            border-radius: 4px;
+            overflow: auto;
+            max-height: 300px;
+            white-space: pre;
+        }
+
+        .memory-viewer .address { color: #569cd6; }
+        .memory-viewer .hex { color: #d4d4d4; }
+        .memory-viewer .ascii { color: #808080; }
+        .memory-viewer .highlight { background-color: #264f78; }
+
+        /* 検索 */
+        .search-controls {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            flex-wrap: wrap;
+            margin-bottom: 10px;
+        }
+
+        .search-results {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            max-height: 150px;
+            overflow-y: auto;
+            background-color: #1e1e1e;
+            padding: 8px;
+            border-radius: 4px;
+        }
+
+        .search-result {
+            padding: 4px 8px;
+            cursor: pointer;
+            border-radius: 2px;
+        }
+
+        .search-result:hover {
+            background-color: #264f78;
+        }
+
+        /* チート */
+        .cheat-input {
+            display: flex;
+            gap: 8px;
+            margin-bottom: 10px;
+        }
+
+        .cheat-input input {
+            flex: 1;
+        }
+
+        .cheat-list {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            max-height: 100px;
+            overflow-y: auto;
+        }
+
+        .cheat-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 8px;
+            background-color: #1e1e1e;
+            margin-bottom: 4px;
+            border-radius: 2px;
+        }
+
+        /* 逆アセンブラ */
+        .disasm-viewer {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.5;
+            background-color: #1e1e1e;
+            padding: 10px;
+            border-radius: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .disasm-line { display: flex; gap: 15px; }
+        .disasm-addr { color: #569cd6; min-width: 50px; }
+        .disasm-inst { color: #dcdcaa; }
+
+        /* スプライトビューア */
+        .sprite-grid {
+            display: grid;
+            grid-template-columns: repeat(8, 1fr);
+            gap: 4px;
+            max-height: 200px;
+            overflow-y: auto;
+        }
+
+        .sprite-item {
+            background-color: #1e1e1e;
+            padding: 4px;
+            border-radius: 2px;
+            font-size: 9px;
+            text-align: center;
+        }
+
+        .sprite-item.hidden { opacity: 0.3; }
+
+        /* CPU/PPU状態 */
+        .state-info {
+            font-family: 'Courier New', monospace;
+            font-size: 11px;
+            line-height: 1.6;
+        }
+
+        /* レスポンシブ */
         @media (max-width: 900px) {
-            .container {
+            .main-container {
                 grid-template-columns: 1fr;
             }
+        }
+
+        /* キー操作ガイド */
+        .key-guide {
+            font-size: 11px;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 4px;
+        }
+
+        .key-guide span {
+            color: #4ec9b0;
         }
     </style>
 </head>
 <body>
-    <h1>🎮 HackNES.rs</h1>
-    <p style="text-align: center;">WebAssemblyで動作するNESエミュレータ（学習用）</p>
+    <h1>HackNES.rs</h1>
+    <p class="subtitle">WebAssembly NES Emulator with Memory Editor</p>
 
-    <div class="container">
-        <div class="emulator-section">
-            <div class="controls">
-                <label for="rom-input" class="file-input-label">ROMを選択</label>
-                <input type="file" id="rom-input" accept=".nes" />
-                <button id="reset-btn" disabled>リセット</button>
-                <button id="step-btn" disabled>1ステップ</button>
+    <div class="main-container">
+        <!-- 左パネル: エミュレータ -->
+        <div class="left-panel">
+            <div class="panel">
+                <div class="controls">
+                    <label for="rom-input" class="file-input-label">ROM</label>
+                    <input type="file" id="rom-input" accept=".nes" />
+                    <button id="reset-btn" disabled>Reset</button>
+                    <button id="pause-btn" disabled>Pause</button>
+                </div>
+                <div id="status" class="status info">ROMファイルを選択してください</div>
+                <canvas id="nes-canvas" width="256" height="240"></canvas>
             </div>
 
-            <div id="status" class="status info">ROMファイルを選択してください</div>
+            <div class="panel">
+                <h3>CPU</h3>
+                <div class="state-info" id="cpu-state">-</div>
+            </div>
 
-            <canvas id="nes-canvas" width="256" height="240"></canvas>
+            <div class="panel">
+                <h3>PPU</h3>
+                <div class="state-info" id="ppu-state">-</div>
+            </div>
+
+            <div class="panel">
+                <h3>Controls</h3>
+                <div class="key-guide">
+                    <div><span>Arrow</span> D-Pad</div>
+                    <div><span>A</span> A Button</div>
+                    <div><span>S</span> B Button</div>
+                    <div><span>D</span> Select</div>
+                    <div><span>F</span> Start</div>
+                    <div><span>Space</span> Pause</div>
+                </div>
+            </div>
         </div>
 
-        <div class="debug-section">
-            <div class="debug-info">
-                <h3>CPU状態</h3>
-                <pre id="cpu-state">-</pre>
+        <!-- 右パネル: メモリエディタ -->
+        <div class="right-panel">
+            <!-- メモリビューア -->
+            <div class="panel">
+                <h3>Memory Viewer</h3>
+                <div class="tabs">
+                    <button class="tab active" data-tab="ram">RAM</button>
+                    <button class="tab" data-tab="vram">VRAM</button>
+                    <button class="tab" data-tab="oam">OAM</button>
+                    <button class="tab" data-tab="palette">Palette</button>
+                    <button class="tab" data-tab="prg">PRG</button>
+                </div>
+                <div class="search-controls">
+                    <input type="text" id="mem-address" placeholder="Address (hex)" style="width: 100px;">
+                    <button id="mem-goto">Go</button>
+                    <button id="mem-refresh">Refresh</button>
+                </div>
+                <div id="memory-viewer" class="memory-viewer">メモリデータがここに表示されます</div>
             </div>
 
-            <div class="debug-info">
-                <h3>PPU状態</h3>
-                <pre id="ppu-state">-</pre>
+            <!-- メモリ検索 -->
+            <div class="panel">
+                <h3>Memory Search</h3>
+                <div class="search-controls">
+                    <select id="search-type">
+                        <option value="exact">Value =</option>
+                        <option value="greater">Value &gt;</option>
+                        <option value="less">Value &lt;</option>
+                        <option value="changed">Changed</option>
+                        <option value="unchanged">Unchanged</option>
+                        <option value="increased">Increased</option>
+                        <option value="decreased">Decreased</option>
+                    </select>
+                    <input type="number" id="search-value" placeholder="Value" min="0" max="255" style="width: 70px;">
+                    <button id="search-new">New</button>
+                    <button id="search-filter">Filter</button>
+                    <button id="search-reset">Reset</button>
+                </div>
+                <div id="search-results" class="search-results">検索結果: 0件</div>
             </div>
 
-            <div class="debug-info">
-                <h3>使い方</h3>
-                <p>1. ROMファイル (.nes) を選択</p>
-                <p>2. エミュレータが自動的に起動</p>
-                <p>3. リセットボタンでリセット</p>
-                <p>4. 1ステップボタンでデバッグ実行</p>
-                <h4 style="color: #4ec9b0; margin-top: 15px;">キー操作</h4>
-                <p>方向キー: ↑↓←→</p>
-                <p>Aボタン: A</p>
-                <p>Bボタン: S</p>
-                <p>Select: D</p>
-                <p>Start: F</p>
+            <!-- メモリ編集 -->
+            <div class="panel">
+                <h3>Memory Edit</h3>
+                <div class="search-controls">
+                    <input type="text" id="edit-address" placeholder="Address" style="width: 80px;">
+                    <input type="text" id="edit-value" placeholder="Value" style="width: 60px;">
+                    <button id="edit-poke">Poke</button>
+                    <button id="edit-freeze" title="Freeze value (apply every frame)">Freeze</button>
+                </div>
+                <div id="frozen-list" class="cheat-list"></div>
+            </div>
+
+            <!-- チートコード -->
+            <div class="panel">
+                <h3>Cheat Codes</h3>
+                <div class="cheat-input">
+                    <input type="text" id="cheat-code" placeholder="Game Genie or AAAA:VV">
+                    <button id="cheat-apply">Apply</button>
+                </div>
+                <div id="cheat-log" class="search-results" style="max-height: 80px;"></div>
+            </div>
+
+            <!-- 逆アセンブラ -->
+            <div class="panel">
+                <h3>Disassembler</h3>
+                <div class="search-controls">
+                    <input type="text" id="disasm-address" placeholder="Address (hex)" style="width: 100px;">
+                    <button id="disasm-goto">Go</button>
+                    <button id="disasm-pc">At PC</button>
+                </div>
+                <div id="disasm-viewer" class="disasm-viewer">-</div>
+            </div>
+
+            <!-- スプライトビューア -->
+            <div class="panel">
+                <h3>Sprites</h3>
+                <button id="sprite-refresh" style="margin-bottom: 10px;">Refresh</button>
+                <div id="sprite-grid" class="sprite-grid"></div>
             </div>
         </div>
     </div>
@@ -183,36 +455,81 @@
         let nes = null;
         let ctx = null;
         let isRunning = false;
+        let isPaused = false;
         let frameCount = 0;
+        let currentMemoryTab = 'ram';
+        let currentMemoryOffset = 0;
+        let searchSnapshot = null;
+        let searchResults = [];
+        let frozenAddresses = new Map(); // address -> value
 
         async function initialize() {
             await init();
             init_logger();
-            
+
             const canvas = document.getElementById('nes-canvas');
             ctx = canvas.getContext('2d');
-            
+
             setupEventListeners();
         }
 
         function setupEventListeners() {
+            // ROM/Control
             document.getElementById('rom-input').addEventListener('change', handleRomLoad);
             document.getElementById('reset-btn').addEventListener('click', handleReset);
-            document.getElementById('step-btn').addEventListener('click', handleStep);
-            
-            // キーボードイベント
+            document.getElementById('pause-btn').addEventListener('click', handlePause);
+
+            // Keyboard
             document.addEventListener('keydown', handleKeyDown);
             document.addEventListener('keyup', handleKeyUp);
+
+            // Memory tabs
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.addEventListener('click', () => switchMemoryTab(tab.dataset.tab));
+            });
+
+            // Memory viewer
+            document.getElementById('mem-goto').addEventListener('click', handleMemoryGoto);
+            document.getElementById('mem-refresh').addEventListener('click', refreshMemoryViewer);
+            document.getElementById('mem-address').addEventListener('keypress', e => {
+                if (e.key === 'Enter') handleMemoryGoto();
+            });
+
+            // Memory search
+            document.getElementById('search-new').addEventListener('click', handleSearchNew);
+            document.getElementById('search-filter').addEventListener('click', handleSearchFilter);
+            document.getElementById('search-reset').addEventListener('click', handleSearchReset);
+
+            // Memory edit
+            document.getElementById('edit-poke').addEventListener('click', handlePoke);
+            document.getElementById('edit-freeze').addEventListener('click', handleFreeze);
+
+            // Cheat codes
+            document.getElementById('cheat-apply').addEventListener('click', handleCheatApply);
+            document.getElementById('cheat-code').addEventListener('keypress', e => {
+                if (e.key === 'Enter') handleCheatApply();
+            });
+
+            // Disassembler
+            document.getElementById('disasm-goto').addEventListener('click', handleDisasmGoto);
+            document.getElementById('disasm-pc').addEventListener('click', handleDisasmPC);
+
+            // Sprites
+            document.getElementById('sprite-refresh').addEventListener('click', refreshSprites);
         }
 
         function handleKeyDown(event) {
             if (!nes) return;
-            
-            // デフォルトの動作を防ぐ（矢印キーのスクロール防止など）
-            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight'].includes(event.key)) {
+
+            if (['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', ' '].includes(event.key)) {
                 event.preventDefault();
             }
-            
+
+            if (event.key === ' ') {
+                handlePause();
+                return;
+            }
+
             nes.key_down(event.key);
         }
 
@@ -232,13 +549,15 @@
                 nes = new NesWeb();
                 nes.load_rom(romData);
 
-                setStatus(`ROMロード成功: ${file.name}`, 'info');
+                setStatus(`ROM: ${file.name}`, 'success');
                 document.getElementById('reset-btn').disabled = false;
-                document.getElementById('step-btn').disabled = false;
+                document.getElementById('pause-btn').disabled = false;
+                isPaused = false;
 
                 startEmulation();
+                refreshAll();
             } catch (error) {
-                setStatus(`エラー: ${error}`, 'error');
+                setStatus(`Error: ${error}`, 'error');
                 console.error(error);
             }
         }
@@ -246,20 +565,19 @@
         function handleReset() {
             if (!nes) return;
             nes.reset();
-            setStatus('リセット完了', 'info');
+            setStatus('Reset', 'info');
+            refreshAll();
         }
 
-        function handleStep() {
+        function handlePause() {
             if (!nes) return;
-            
-            try {
-                nes.step_frame();
-                nes.render(ctx);
-                updateDebugInfo();
-            } catch (error) {
-                setStatus(`エラー: ${error}`, 'error');
-                console.error(error);
+            isPaused = !isPaused;
+            document.getElementById('pause-btn').textContent = isPaused ? 'Resume' : 'Pause';
+            document.getElementById('pause-btn').classList.toggle('active', isPaused);
+            if (!isPaused && isRunning) {
+                requestAnimationFrame(emulationLoop);
             }
+            refreshAll();
         }
 
         function startEmulation() {
@@ -268,20 +586,23 @@
         }
 
         function emulationLoop() {
-            if (!isRunning || !nes) return;
+            if (!isRunning || !nes || isPaused) return;
 
             try {
+                // Apply frozen values
+                frozenAddresses.forEach((value, address) => {
+                    nes.poke_memory(address, value);
+                });
+
                 nes.step_frame();
                 nes.render(ctx);
-                
-                // デバッグ情報は60フレームに1回更新（約1秒に1回）
+
                 frameCount++;
-                if (frameCount % 60 === 0) {
+                if (frameCount % 30 === 0) {
                     updateDebugInfo();
                 }
             } catch (error) {
-                setStatus(`実行エラー: ${error}`, 'error');
-                console.error(error);
+                setStatus(`Error: ${error}`, 'error');
                 isRunning = false;
                 return;
             }
@@ -291,14 +612,305 @@
 
         function updateDebugInfo() {
             if (!nes) return;
+            document.getElementById('cpu-state').textContent = nes.get_cpu_state();
+            document.getElementById('ppu-state').textContent = nes.get_ppu_state();
+        }
 
-            try {
-                document.getElementById('cpu-state').textContent = nes.get_cpu_state();
-                document.getElementById('ppu-state').textContent = nes.get_ppu_state();
-            } catch (error) {
-                console.error('Debug info error:', error);
+        function refreshAll() {
+            updateDebugInfo();
+            refreshMemoryViewer();
+        }
+
+        // ========== Memory Viewer ==========
+
+        function switchMemoryTab(tab) {
+            currentMemoryTab = tab;
+            currentMemoryOffset = 0;
+            document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+            document.querySelector(`[data-tab="${tab}"]`).classList.add('active');
+            refreshMemoryViewer();
+        }
+
+        function refreshMemoryViewer() {
+            if (!nes) return;
+
+            let data, startAddr;
+            const bytesPerLine = 16;
+            const lines = 16;
+
+            switch (currentMemoryTab) {
+                case 'ram':
+                    data = nes.read_ram();
+                    startAddr = currentMemoryOffset;
+                    break;
+                case 'vram':
+                    data = nes.read_vram();
+                    startAddr = currentMemoryOffset;
+                    break;
+                case 'oam':
+                    data = nes.read_oam();
+                    startAddr = currentMemoryOffset;
+                    break;
+                case 'palette':
+                    data = nes.read_palette();
+                    startAddr = 0;
+                    break;
+                case 'prg':
+                    data = nes.read_memory_range(0x8000 + currentMemoryOffset, bytesPerLine * lines);
+                    startAddr = 0x8000 + currentMemoryOffset;
+                    break;
+            }
+
+            const viewer = document.getElementById('memory-viewer');
+            let html = '';
+
+            for (let i = 0; i < Math.min(data.length, bytesPerLine * lines); i += bytesPerLine) {
+                const addr = startAddr + i;
+                let hexPart = '';
+                let asciiPart = '';
+
+                for (let j = 0; j < bytesPerLine && i + j < data.length; j++) {
+                    const byte = data[i + j];
+                    hexPart += byte.toString(16).padStart(2, '0').toUpperCase() + ' ';
+                    asciiPart += (byte >= 0x20 && byte < 0x7F) ? String.fromCharCode(byte) : '.';
+                    if (j === 7) hexPart += ' ';
+                }
+
+                html += `<span class="address">${addr.toString(16).padStart(4, '0').toUpperCase()}</span>: `;
+                html += `<span class="hex">${hexPart.padEnd(50)}</span>`;
+                html += `<span class="ascii">|${asciiPart}|</span>\n`;
+            }
+
+            viewer.innerHTML = html || 'No data';
+        }
+
+        function handleMemoryGoto() {
+            const input = document.getElementById('mem-address').value;
+            const addr = parseInt(input, 16);
+            if (!isNaN(addr)) {
+                currentMemoryOffset = addr;
+                refreshMemoryViewer();
             }
         }
+
+        // ========== Memory Search ==========
+
+        function handleSearchNew() {
+            if (!nes) return;
+
+            searchSnapshot = Array.from(nes.read_ram());
+            const searchType = document.getElementById('search-type').value;
+            const searchValue = parseInt(document.getElementById('search-value').value) || 0;
+
+            searchResults = [];
+            for (let i = 0; i < searchSnapshot.length; i++) {
+                if (matchesCondition(searchSnapshot[i], null, searchType, searchValue)) {
+                    searchResults.push({ address: i, value: searchSnapshot[i] });
+                }
+            }
+
+            updateSearchResults();
+        }
+
+        function handleSearchFilter() {
+            if (!nes || !searchSnapshot) return;
+
+            const currentRam = Array.from(nes.read_ram());
+            const searchType = document.getElementById('search-type').value;
+            const searchValue = parseInt(document.getElementById('search-value').value) || 0;
+
+            searchResults = searchResults.filter(result => {
+                const currentValue = currentRam[result.address];
+                const previousValue = searchSnapshot[result.address];
+                return matchesCondition(currentValue, previousValue, searchType, searchValue);
+            });
+
+            // Update values
+            searchResults.forEach(r => r.value = currentRam[r.address]);
+            searchSnapshot = currentRam;
+
+            updateSearchResults();
+        }
+
+        function matchesCondition(current, previous, type, value) {
+            switch (type) {
+                case 'exact': return current === value;
+                case 'greater': return current > value;
+                case 'less': return current < value;
+                case 'changed': return previous !== null && current !== previous;
+                case 'unchanged': return previous !== null && current === previous;
+                case 'increased': return previous !== null && current > previous;
+                case 'decreased': return previous !== null && current < previous;
+                default: return false;
+            }
+        }
+
+        function handleSearchReset() {
+            searchSnapshot = null;
+            searchResults = [];
+            document.getElementById('search-results').innerHTML = '検索結果: 0件';
+        }
+
+        function updateSearchResults() {
+            const container = document.getElementById('search-results');
+            if (searchResults.length === 0) {
+                container.innerHTML = '検索結果: 0件';
+                return;
+            }
+
+            const maxShow = 100;
+            let html = `検索結果: ${searchResults.length}件${searchResults.length > maxShow ? ` (${maxShow}件表示)` : ''}\n\n`;
+
+            searchResults.slice(0, maxShow).forEach(r => {
+                html += `<div class="search-result" onclick="selectSearchResult(${r.address})">`;
+                html += `$${r.address.toString(16).padStart(4, '0').toUpperCase()}: ${r.value.toString(16).padStart(2, '0').toUpperCase()} (${r.value})`;
+                html += `</div>`;
+            });
+
+            container.innerHTML = html;
+        }
+
+        window.selectSearchResult = function(address) {
+            document.getElementById('edit-address').value = address.toString(16).toUpperCase();
+            document.getElementById('edit-value').value = nes ? nes.peek_ram(address).toString(16).toUpperCase() : '';
+        };
+
+        // ========== Memory Edit ==========
+
+        function handlePoke() {
+            if (!nes) return;
+
+            const address = parseInt(document.getElementById('edit-address').value, 16);
+            const value = parseInt(document.getElementById('edit-value').value, 16);
+
+            if (isNaN(address) || isNaN(value)) {
+                setStatus('Invalid address or value', 'error');
+                return;
+            }
+
+            nes.poke_memory(address, value & 0xFF);
+            setStatus(`Poked $${address.toString(16).toUpperCase()} = $${(value & 0xFF).toString(16).toUpperCase()}`, 'success');
+            refreshMemoryViewer();
+        }
+
+        function handleFreeze() {
+            const address = parseInt(document.getElementById('edit-address').value, 16);
+            const value = parseInt(document.getElementById('edit-value').value, 16);
+
+            if (isNaN(address) || isNaN(value)) {
+                setStatus('Invalid address or value', 'error');
+                return;
+            }
+
+            if (frozenAddresses.has(address)) {
+                frozenAddresses.delete(address);
+            } else {
+                frozenAddresses.set(address, value & 0xFF);
+            }
+
+            updateFrozenList();
+        }
+
+        function updateFrozenList() {
+            const container = document.getElementById('frozen-list');
+            if (frozenAddresses.size === 0) {
+                container.innerHTML = '<div style="color: #808080; font-size: 11px;">No frozen addresses</div>';
+                return;
+            }
+
+            let html = '';
+            frozenAddresses.forEach((value, address) => {
+                html += `<div class="cheat-item">`;
+                html += `$${address.toString(16).padStart(4, '0').toUpperCase()} = $${value.toString(16).padStart(2, '0').toUpperCase()}`;
+                html += `<button onclick="unfreezeAddress(${address})" style="padding: 2px 8px; font-size: 10px;">X</button>`;
+                html += `</div>`;
+            });
+
+            container.innerHTML = html;
+        }
+
+        window.unfreezeAddress = function(address) {
+            frozenAddresses.delete(address);
+            updateFrozenList();
+        };
+
+        // ========== Cheat Codes ==========
+
+        function handleCheatApply() {
+            if (!nes) return;
+
+            const code = document.getElementById('cheat-code').value.trim();
+            if (!code) return;
+
+            const log = document.getElementById('cheat-log');
+
+            try {
+                let result;
+                if (code.includes(':')) {
+                    result = nes.apply_raw_cheat(code);
+                } else {
+                    result = nes.apply_game_genie(code);
+                }
+                log.innerHTML = `<div style="color: #89d185;">${result}</div>` + log.innerHTML;
+            } catch (e) {
+                log.innerHTML = `<div style="color: #f48771;">${e}</div>` + log.innerHTML;
+            }
+
+            document.getElementById('cheat-code').value = '';
+        }
+
+        // ========== Disassembler ==========
+
+        function handleDisasmGoto() {
+            if (!nes) return;
+            const addr = parseInt(document.getElementById('disasm-address').value, 16);
+            if (!isNaN(addr)) {
+                showDisassembly(addr);
+            }
+        }
+
+        function handleDisasmPC() {
+            if (!nes) return;
+            const disasm = nes.disassemble_at_pc(20);
+            document.getElementById('disasm-viewer').innerHTML = formatDisassembly(disasm);
+        }
+
+        function showDisassembly(addr) {
+            if (!nes) return;
+            const disasm = nes.disassemble(addr, 20);
+            document.getElementById('disasm-viewer').innerHTML = formatDisassembly(disasm);
+        }
+
+        function formatDisassembly(text) {
+            return text.split('\n').map(line => {
+                const [addr, ...rest] = line.split(': ');
+                return `<div class="disasm-line"><span class="disasm-addr">${addr}</span><span class="disasm-inst">${rest.join(': ')}</span></div>`;
+            }).join('');
+        }
+
+        // ========== Sprites ==========
+
+        function refreshSprites() {
+            if (!nes) return;
+
+            const json = nes.get_sprites_json();
+            const sprites = JSON.parse(json);
+            const container = document.getElementById('sprite-grid');
+
+            let html = '';
+            for (let i = 0; i < 64; i++) {
+                const sprite = sprites.find(s => s.index === i);
+                if (sprite) {
+                    html += `<div class="sprite-item">#${i}<br>X:${sprite.x} Y:${sprite.y}<br>T:$${sprite.tile.toString(16).toUpperCase()}</div>`;
+                } else {
+                    html += `<div class="sprite-item hidden">#${i}<br>-</div>`;
+                }
+            }
+
+            container.innerHTML = html;
+        }
+
+        // ========== Utility ==========
 
         function setStatus(message, type) {
             const statusEl = document.getElementById('status');
