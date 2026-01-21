@@ -229,45 +229,48 @@ impl Cpu {
     }
 
     pub fn interrupt(&mut self, kind: Interrupt) {
+        // IRQ is ignored if I flag is set
+        if kind == Interrupt::Irq && self.get_flag(Flag::IrqDisable) {
+            return;
+        }
+
         if kind != Interrupt::Break && kind != Interrupt::Reset {
             self.bus.tick();
         }
 
         match kind {
-            Interrupt::Break | Interrupt::Reset => {
+            Interrupt::Reset => {
+                // Reset does NOT push to stack, just performs dummy reads
+                // and decrements SP by 3
+                self.sp = self.sp.wrapping_sub(3);
+            }
+            Interrupt::Break | Interrupt::Nmi | Interrupt::Irq => {
                 self.push_word(self.pc);
+                let mut status = self.p | Flag::Push as u8;
+                if kind == Interrupt::Break {
+                    status |= Flag::Break as u8;
+                } else {
+                    status &= !(Flag::Break as u8);
+                }
+                self.push_byte(status);
             }
-            Interrupt::Nmi | Interrupt::Irq => {
-                self.push_word(self.pc);
-            }
-        }
-
-        let irq_disable = kind == Interrupt::Irq && self.get_flag(Flag::IrqDisable);
-
-        if kind != Interrupt::Reset && !irq_disable {
-            let mut status = self.p | Flag::Push as u8;
-            match kind {
-                Interrupt::Break => status |= Flag::Break as u8,
-                _ => status &= !(Flag::Break as u8),
-            }
-            self.push_byte(status);
         }
 
         self.set_flag(Flag::IrqDisable, true);
 
-        if kind != Interrupt::Reset && !irq_disable {
-            let vector = match kind {
-                Interrupt::Nmi => 0xFFFA,
-                Interrupt::Irq | Interrupt::Break => 0xFFFE,
-                _ => unreachable!(),
-            };
-            self.pc = self.bus.read_word(vector as u16);
-        } else if kind == Interrupt::Reset {
+        let vector = match kind {
+            Interrupt::Nmi => 0xFFFA,
+            Interrupt::Reset => 0xFFFC,
+            Interrupt::Irq | Interrupt::Break => 0xFFFE,
+        };
+
+        if kind == Interrupt::Reset {
             self.bus.tick();
             self.bus.tick();
             self.bus.tick();
-            self.pc = self.bus.read_word(0xFFFC_u16);
         }
+
+        self.pc = self.bus.read_word(vector as u16);
     }
 
     pub fn step(&mut self) -> crate::Result<()> {

@@ -76,32 +76,145 @@ impl Ppu {
     pub fn tick(&mut self) {
         self.renderer.tick();
 
+        let scanline = self.renderer.scanline;
+        let cycle = self.renderer.cycle;
+        let rendering_enabled = (self.registers.mask & 0x18) != 0;
+
         // VBlank logic
-        if self.renderer.scanline == 241 && self.renderer.cycle == 1 {
+        if scanline == 241 && cycle == 1 {
             self.registers.status |= 0x80; // Set VBlank flag
             if self.registers.ctrl & 0x80 != 0 {
                 self.nmi = true;
             }
         }
 
-        if self.renderer.scanline == 261 && self.renderer.cycle == 1 {
+        // Pre-render scanline (261)
+        if scanline == 261 && cycle == 1 {
             self.registers.status &= !0x80; // Clear VBlank flag
+            self.registers.status &= !0x40; // Clear Sprite 0 Hit flag
+            self.registers.status &= !0x20; // Clear Sprite Overflow flag
             self.nmi = false;
         }
 
+        // Sprite 0 Hit detection - check once per scanline at a fixed cycle
+        // This simplified approach checks at cycle 2 of each visible scanline
+        if scanline < 240 && cycle == 2 && rendering_enabled {
+            self.check_sprite_0_hit_scanline(scanline);
+        }
+
         // Render full frame at end of visible scanlines
-        if self.renderer.scanline == 240 && self.renderer.cycle == 1 {
+        if scanline == 240 && cycle == 1 {
             self.render_frame();
         }
 
         // Clock MMC3 IRQ counter at cycle 260 on visible scanlines
         // Only clock when rendering is enabled (BG or sprites enabled)
-        if self.renderer.cycle == 260
-            && self.renderer.scanline < 240
-            && (self.registers.mask & 0x18) != 0
+        if cycle == 260
+            && scanline < 240
+            && rendering_enabled
         {
             if let Some(ref c) = self.cartridge {
                 c.borrow_mut().clock_irq();
+            }
+        }
+    }
+
+    /// Simplified sprite 0 hit detection - checks if sprite 0 overlaps with background on this scanline
+    fn check_sprite_0_hit_scanline(&mut self, scanline: u16) {
+        // If already set, skip
+        if (self.registers.status & 0x40) != 0 {
+            return;
+        }
+
+        // Both BG and sprites must be enabled
+        if (self.registers.mask & 0x08) == 0 || (self.registers.mask & 0x10) == 0 {
+            return;
+        }
+
+        // Get sprite 0 info
+        let sprite_y = self.renderer.oam[0] as u16;
+        let sprite_tile = self.renderer.oam[1];
+        let sprite_attr = self.renderer.oam[2];
+        let sprite_x = self.renderer.oam[3] as u16;
+
+        // Sprite 0 hit cannot occur at x=255
+        if sprite_x >= 255 {
+            return;
+        }
+
+        // Sprite appears on scanline (sprite_y + 1)
+        let sprite_top = sprite_y.wrapping_add(1);
+        let sprite_height: u16 = if (self.registers.ctrl & 0x20) != 0 { 16 } else { 8 };
+
+        // Check if this scanline intersects sprite 0
+        if scanline < sprite_top || scanline >= sprite_top + sprite_height {
+            return;
+        }
+
+        // Calculate which row of the sprite we're on
+        let sprite_row = scanline - sprite_top;
+        let flip_v = (sprite_attr & 0x80) != 0;
+        let flip_h = (sprite_attr & 0x40) != 0;
+        let row = if flip_v { sprite_height - 1 - sprite_row } else { sprite_row };
+
+        // Get sprite pattern
+        let sprite_pattern_base: u16 = if (self.registers.ctrl & 0x08) != 0 { 0x1000 } else { 0x0000 };
+        let tile_addr = sprite_pattern_base + (sprite_tile as u16) * 16 + row;
+        let sprite_plane0 = self.read_chr(tile_addr);
+        let sprite_plane1 = self.read_chr(tile_addr + 8);
+
+        // Get background pattern table
+        let bg_pattern_base: u16 = if (self.registers.ctrl & 0x10) != 0 { 0x1000 } else { 0x0000 };
+
+        // Check each pixel of sprite 0 on this scanline
+        for col in 0..8u16 {
+            let pixel_x = sprite_x + col;
+            
+            // Cannot hit at x >= 255
+            if pixel_x >= 255 {
+                continue;
+            }
+
+            // Left edge clipping
+            if pixel_x < 8 {
+                if (self.registers.mask & 0x02) == 0 || (self.registers.mask & 0x04) == 0 {
+                    continue;
+                }
+            }
+
+            // Check sprite pixel
+            let sprite_bit = if flip_h { col } else { 7 - col } as u8;
+            let sprite_pixel = ((sprite_plane0 >> sprite_bit) & 1) | (((sprite_plane1 >> sprite_bit) & 1) << 1);
+            
+            if sprite_pixel == 0 {
+                continue;
+            }
+
+            // Check background pixel at this position
+            // For SMB, scroll is 0 when waiting for sprite 0 hit, so we use pixel_x directly
+            let bg_x = pixel_x as usize;
+            let bg_y = scanline as usize;
+            
+            let tile_x = bg_x / 8;
+            let tile_y = bg_y / 8;
+            let fine_x = bg_x % 8;
+            let fine_y = bg_y % 8;
+
+            // Get nametable address (assuming nametable 0 for simplicity, which is correct for SMB status bar)
+            let nt_addr = 0x2000 + (tile_y * 32 + tile_x) as u16;
+            let tile_num = self.read_vram(nt_addr);
+
+            // Get background tile pixel
+            let bg_tile_addr = bg_pattern_base + (tile_num as u16) * 16 + fine_y as u16;
+            let bg_plane0 = self.read_chr(bg_tile_addr);
+            let bg_plane1 = self.read_chr(bg_tile_addr + 8);
+            let bg_bit = 7 - fine_x as u8;
+            let bg_pixel = ((bg_plane0 >> bg_bit) & 1) | (((bg_plane1 >> bg_bit) & 1) << 1);
+
+            // Hit if both pixels are non-transparent
+            if bg_pixel != 0 {
+                self.registers.status |= 0x40;
+                return;
             }
         }
     }
@@ -128,21 +241,30 @@ impl Ppu {
     }
 
     fn render_background(&mut self) {
-        let _nametable_base = 0x2000 + ((self.registers.ctrl & 0x03) as u16) * 0x0400;
         let pattern_table_base = if self.registers.ctrl & 0x10 != 0 { 0x1000 } else { 0x0000 };
+        
+        // Get base nametable offset from PPUCTRL bits 0-1
+        // This adds 256 pixels horizontally (bit 0) or 240 pixels vertically (bit 1)
+        let base_nt_x = if (self.registers.ctrl & 0x01) != 0 { 256 } else { 0 };
+        let base_nt_y = if (self.registers.ctrl & 0x02) != 0 { 240 } else { 0 };
 
         for y in 0..240 {
             for x in 0..256 {
-                let scroll_x = (x + self.registers.scroll_x as usize) % 512;
-                let scroll_y = (y + self.registers.scroll_y as usize) % 480;
+                // Combine base nametable offset with scroll values
+                let scroll_x = (x + self.registers.scroll_x as usize + base_nt_x) % 512;
+                let scroll_y = (y + self.registers.scroll_y as usize + base_nt_y) % 480;
 
                 let tile_x = scroll_x / 8;
                 let tile_y = scroll_y / 8;
                 let pixel_x = scroll_x % 8;
                 let pixel_y = scroll_y % 8;
 
-                // Determine which nametable to use
-                let nt_offset = (((tile_x / 32) + (tile_y / 30) * 2) * 0x0400) as u16;
+                // Determine which nametable to use based on scroll position
+                // Nametable layout: 0 1
+                //                   2 3
+                let nt_x = tile_x / 32;  // 0 or 1
+                let nt_y = tile_y / 30;  // 0 or 1
+                let nt_offset = ((nt_x + nt_y * 2) * 0x0400) as u16;
                 let nt_addr = 0x2000 + nt_offset + ((tile_y % 30) * 32 + (tile_x % 32)) as u16;
 
                 let tile_num = self.read_vram(nt_addr);

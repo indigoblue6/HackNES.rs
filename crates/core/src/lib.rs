@@ -43,6 +43,12 @@ impl Nes {
         let target = self.cpu.bus.cycles + CYCLES_PER_FRAME;
 
         while self.cpu.bus.cycles < target {
+            // Handle OAM DMA stall cycles
+            let stall_cycles = self.cpu.bus.reset_cpu_stall_cycles();
+            for _ in 0..stall_cycles {
+                self.cpu.bus.tick();
+            }
+
             self.cpu.step()?;
 
             // nestestの成功アドレスをチェック
@@ -80,6 +86,12 @@ impl Nes {
 
     /// 1CPUサイクル実行（デバッグ用）
     pub fn step(&mut self) -> Result<u32> {
+        // Handle OAM DMA stall cycles
+        let stall_cycles = self.cpu.bus.reset_cpu_stall_cycles();
+        for _ in 0..stall_cycles {
+            self.cpu.bus.tick();
+        }
+
         let start_cycles = self.cpu.bus.cycles;
         self.cpu.step()?;
         let elapsed = (self.cpu.bus.cycles - start_cycles) as u32;
