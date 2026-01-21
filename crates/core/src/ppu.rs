@@ -287,16 +287,42 @@ impl Ppu {
     }
 
     fn mirror_vram_addr(&self, addr: u16) -> usize {
+        use crate::cartridge::Mirroring;
+
         let mirrored_vram = addr & 0b10111111111111;
         let vram_index = mirrored_vram - 0x2000;
         let name_table = vram_index / 0x400;
 
-        // Horizontal mirroring (default)
-        match name_table {
-            2 => (vram_index - 0x400) as usize,
-            3 => (vram_index - 0x800) as usize,
-            1 => (vram_index - 0x400) as usize,
-            _ => vram_index as usize,
+        let mirroring = if let Some(ref c) = self.cartridge {
+            c.borrow().mirroring()
+        } else {
+            Mirroring::Horizontal
+        };
+
+        match mirroring {
+            Mirroring::Horizontal => {
+                match name_table {
+                    1 => (vram_index - 0x400) as usize,
+                    2 => (vram_index - 0x400) as usize,
+                    3 => (vram_index - 0x800) as usize,
+                    _ => vram_index as usize,
+                }
+            }
+            Mirroring::Vertical => {
+                match name_table {
+                    2 => (vram_index - 0x800) as usize,
+                    3 => (vram_index - 0x800) as usize,
+                    _ => vram_index as usize,
+                }
+            }
+            Mirroring::SingleScreenLower => {
+                // All nametables map to the first one
+                (vram_index % 0x400) as usize
+            }
+            Mirroring::SingleScreenUpper => {
+                // All nametables map to the second one
+                (vram_index % 0x400 + 0x400) as usize
+            }
         }
     }
 

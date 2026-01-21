@@ -36,6 +36,8 @@ pub struct Cartridge {
 pub enum Mirroring {
     Horizontal,
     Vertical,
+    SingleScreenLower,
+    SingleScreenUpper,
 }
 
 impl Cartridge {
@@ -115,6 +117,8 @@ impl Cartridge {
             2 => self.mapper2_read_prg(addr),
             3 => self.mapper3_read_prg(addr),
             4 => self.mapper4_read_prg(addr),
+            7 => self.mapper7_read_prg(addr),
+            66 => self.mapper66_read_prg(addr),
             _ => {
                 log::warn!("Unsupported mapper {}", self.mapper);
                 0
@@ -129,6 +133,8 @@ impl Cartridge {
             2 => self.mapper2_write_prg(addr, value),
             3 => self.mapper3_write_prg(addr, value),
             4 => self.mapper4_write_prg(addr, value),
+            7 => self.mapper7_write_prg(addr, value),
+            66 => self.mapper66_write_prg(addr, value),
             _ => {}
         }
     }
@@ -140,6 +146,8 @@ impl Cartridge {
             2 => self.mapper2_read_chr(addr),
             3 => self.mapper3_read_chr(addr),
             4 => self.mapper4_read_chr(addr),
+            7 => self.mapper7_read_chr(addr),
+            66 => self.mapper66_read_chr(addr),
             _ => 0,
         }
     }
@@ -151,6 +159,8 @@ impl Cartridge {
             2 => self.mapper2_write_chr(addr, value),
             3 => self.mapper3_write_chr(addr, value),
             4 => self.mapper4_write_chr(addr, value),
+            7 => self.mapper7_write_chr(addr, value),
+            66 => self.mapper66_write_chr(addr, value),
             _ => {}
         }
     }
@@ -665,6 +675,92 @@ impl Cartridge {
                 let offset = (addr & 0x0FFF) as usize;
                 (bank * 4096 + offset) % self.chr_ram.len().max(1)
             };
+            if index < self.chr_ram.len() {
+                self.chr_ram[index] = value;
+            }
+        }
+    }
+
+    // Mapper 7 (AxROM)
+    // 32KB switchable PRG, 8KB CHR RAM, single-screen mirroring
+    fn mapper7_read_prg(&self, addr: u16) -> u8 {
+        match addr {
+            0x8000..=0xFFFF => {
+                // 32KB switchable bank
+                let bank = (self.prg_bank & 0x07) as usize;
+                let offset = (addr - 0x8000) as usize;
+                let index = (bank * 32768 + offset) % self.prg_rom.len().max(1);
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    fn mapper7_write_prg(&mut self, addr: u16, value: u8) {
+        if (0x8000..=0xFFFF).contains(&addr) {
+            // Bits 0-2: PRG bank select
+            self.prg_bank = value & 0x07;
+            // Bit 4: Nametable select (single-screen mirroring)
+            self.mirroring = if (value & 0x10) != 0 {
+                Mirroring::SingleScreenUpper
+            } else {
+                Mirroring::SingleScreenLower
+            };
+        }
+    }
+
+    fn mapper7_read_chr(&self, addr: u16) -> u8 {
+        // CHR RAM only
+        let index = (addr & 0x1FFF) as usize;
+        self.chr_ram.get(index).copied().unwrap_or(0)
+    }
+
+    fn mapper7_write_chr(&mut self, addr: u16, value: u8) {
+        // CHR RAM only
+        let index = (addr & 0x1FFF) as usize;
+        if index < self.chr_ram.len() {
+            self.chr_ram[index] = value;
+        }
+    }
+
+    // Mapper 66 (GxROM)
+    // 32KB switchable PRG, 8KB switchable CHR
+    fn mapper66_read_prg(&self, addr: u16) -> u8 {
+        match addr {
+            0x8000..=0xFFFF => {
+                // 32KB switchable bank (bits 4-5 of bank register)
+                let bank = ((self.prg_bank >> 4) & 0x03) as usize;
+                let offset = (addr - 0x8000) as usize;
+                let index = (bank * 32768 + offset) % self.prg_rom.len().max(1);
+                self.prg_rom.get(index).copied().unwrap_or(0)
+            }
+            _ => 0,
+        }
+    }
+
+    fn mapper66_write_prg(&mut self, addr: u16, value: u8) {
+        if (0x8000..=0xFFFF).contains(&addr) {
+            // Bits 4-5: PRG bank, Bits 0-1: CHR bank
+            self.prg_bank = value;
+            self.chr_bank = value & 0x03;
+        }
+    }
+
+    fn mapper66_read_chr(&self, addr: u16) -> u8 {
+        if self.chr_rom.is_empty() {
+            return self.chr_ram.get((addr & 0x1FFF) as usize).copied().unwrap_or(0);
+        }
+        // 8KB switchable bank
+        let bank = self.chr_bank as usize;
+        let offset = (addr & 0x1FFF) as usize;
+        let index = (bank * 8192 + offset) % self.chr_rom.len().max(1);
+        self.chr_rom.get(index).copied().unwrap_or(0)
+    }
+
+    fn mapper66_write_chr(&mut self, addr: u16, value: u8) {
+        // CHR ROM, ignore writes (unless CHR RAM)
+        if self.chr_rom.is_empty() {
+            let index = (addr & 0x1FFF) as usize;
             if index < self.chr_ram.len() {
                 self.chr_ram[index] = value;
             }
